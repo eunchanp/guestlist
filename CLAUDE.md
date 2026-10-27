@@ -80,6 +80,7 @@ bcrypt, so token writes skip the slow check (0.2 ms vs 48 ms).
 | `guestlist_update` | `p_id, p_name, p_note` | row | |
 | `guestlist_set_arrived` | `p_id, p_arrived, p_at` | row | `p_at` restores an exact time (Undo), else server `now()` |
 | `guestlist_delete` | `p_id` | void | |
+| `guestlist_restore` | `p_id, p_name, p_note, p_arrived_at, p_created_at` | row | Undo of a delete; same id; returns the existing row if it's already back |
 | `guestlist_clear` | (none) | jsonb `{batch, count}` | moves every guest into `guestlist_cleared` |
 | `guestlist_undo_clear` | `p_batch` | restored rows | `[]` if already undone or a later clear replaced it |
 
@@ -111,7 +112,7 @@ throws the same codes, so every UI path works in demo:
 
 ## Client architecture (`js/app.js`)
 - **Stores:** `createSupabaseStore` / `createLocalStore` share one interface
-  (`init, fetchAll, login, add, update, setArrived, remove, clear, undoClear, subscribe`).
+  (`init, fetchAll, login, add, update, setArrived, remove, restore, clear, undoClear, subscribe`).
   A new write must be added to both.
   - Supabase: lazy-loads supabase-js 2.45.4 (UMD from jsdelivr) in `init()`,
     so demo mode works offline. `persistSession: false`.
@@ -167,7 +168,13 @@ throws the same codes, so every UI path works in demo:
 - Walk-ins (unlocked, and only when no guest has exactly that `norm` name): under real
   matches, one quiet "Not listed? Add X & check in" row; with no matches,
   "Add X & check in" plus "Add to list only".
-- Every check-in toast has Undo. `/` focuses search from anywhere.
+- Every write's toast has Undo: check-in/out (`setArrived` back), add and
+  walk-in (`removeGuest` / `removeGuests`), edit (`saveGuest` back, silent),
+  delete (`restoreGuest`), clear (`undoClear`), lock (puts the token back).
+  A new action needs one too. `/` focuses search from anywhere.
+- Added names (add sheet and walk-ins, not edits) go through
+  `capitalizeName()`: lowercase first letters of each word, and after `-` or
+  an apostrophe, become uppercase; nothing is lowercased.
 - Add sheet: one name per line or comma (also `，` `、`), duplicates (against the list and within the
   paste) flagged and skipped, Cmd/Ctrl+Enter submits.
 - Delete is a two-tap arm in the edit sheet. **Clear list** shows only under

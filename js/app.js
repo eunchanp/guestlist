@@ -16,6 +16,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
 // Case-, accent- and whitespace-insensitive form used for search + duplicate checks.
 const norm = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
   .toLowerCase().replace(/\s+/g, ' ').trim();
+// "ana de la cruz" -> "Ana De La Cruz", "o'brien-smith" -> "O'Brien-Smith". Only
+// lowercase first letters change, so "McKay" and "DJ" stay as typed.
+const capitalizeName = (s) => String(s ?? '')
+  .replace(/(^|[\s\-'’])(\p{Ll})/gu, (_, sep, c) => sep + c.toLocaleUpperCase());
 const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
 const byName = (a, b) => collator.compare(a.name, b.name);
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -96,6 +100,11 @@ function createSupabaseStore() {
     setArrived: (token, id, arrived, at = null) =>
       rpc('guestlist_set_arrived', { p_password: token, p_id: id, p_arrived: arrived, p_at: at }),
     remove: (token, id) => rpc('guestlist_delete', { p_password: token, p_id: id }),
+    // Puts a deleted row back as it was (Undo); resolves to the row.
+    restore: (token, g) => rpc('guestlist_restore', {
+      p_password: token, p_id: g.id, p_name: g.name, p_note: g.note,
+      p_arrived_at: g.arrived_at, p_created_at: g.created_at,
+    }),
     // Resolves to { batch, count }. The server keeps the deleted rows until
     // the next clear, and undoClear(batch) resolves to the restored rows
     // ([] if that clear was already undone or replaced).
@@ -172,6 +181,17 @@ function createLocalStore() {
       check(token);
       write(read().filter((x) => x.id !== id));
       return later(null);
+    },
+    async restore(token, g) {
+      check(token);
+      const rows = read();
+      let r = rows.find((x) => x.id === g.id);
+      if (!r) {
+        r = { id: g.id, name: g.name.trim(), note: (g.note || '').trim(), arrived_at: g.arrived_at,
+          created_at: g.created_at || now(), updated_at: now() };
+        write([...rows, r]);
+      }
+      return later({ ...r });
     },
     async clear(token) {
       check(token);
@@ -587,7 +607,7 @@ async function addGuests(names, note, { arrived = false } = {}) {
 }
 
 async function walkIn(name, arrived) {
-  const rows = await addGuests([name], '', { arrived });
+  const rows = await addGuests([capitalizeName(name)], '', { arrived });
   if (!rows || !rows[0]) return;
   const g = rows[0];
   if (arrived) {
@@ -598,7 +618,10 @@ async function walkIn(name, arrived) {
     });
     resetSearchForNextGuest();
   } else {
-    toast(`<b>${esc(g.name)}</b> added to the list`, { kind: 'success' });
+    toast(`<b>${esc(g.name)}</b> added to the list`, {
+      kind: 'success', action: 'Undo',
+      onAction: () => removeGuest(g.id, { silent: true }),
+    });
   }
 }
 
@@ -612,7 +635,36 @@ async function removeGuest(id, { silent = false } = {}) {
     () => state.guests.set(id, g),
     `Couldn’t delete ${g.name}.`,
   );
-  if (ok && !silent) toast(`<b>${esc(g.name)}</b> deleted`);
+  if (ok && !silent) {
+    toast(`<b>${esc(g.name)}</b> deleted`, { action: 'Undo', onAction: () => restoreGuest(g) });
+  }
+}
+
+// Undo for a delete: the same row comes back, arrival time and all.
+async function restoreGuest(g) {
+  if (state.guests.has(g.id)) return;
+  const { _pending, ...saved } = g;
+  state.guests.set(g.id, { ...saved, _pending: true });
+  render();
+  const row = await mutate(
+    (token) => store.restore(token, saved),
+    () => state.guests.delete(g.id),
+    `Couldn’t restore ${g.name}.`,
+  );
+  if (row) { state.guests.set(row.id, row); render(); }
+}
+
+// Undo for an add from the add sheet: take those guests off again.
+async function removeGuests(ids) {
+  const gone = ids.map((id) => state.guests.get(id)).filter(Boolean);
+  gone.forEach((g) => state.guests.delete(g.id));
+  render();
+  await mutate(
+    (token) => Promise.all(gone.map((g) => store.remove(token, g.id))),
+    // Some deletes may have gone through, so ask the server what is left.
+    () => { gone.forEach((g) => state.guests.set(g.id, g)); refetch(); },
+    'Couldn’t undo the add.',
+  );
 }
 
 // ---------- lock / unlock ----------
@@ -659,11 +711,22 @@ async function upgradeLegacyPassword() {
 }
 
 function lock(withToast = true) {
+  const token = state.token;
   state.token = null;
   forgetToken();
   closeAllModals();
   render();
-  if (withToast) toast('Locked. This device is now view-only.');
+  if (withToast) {
+    toast('Locked. This device is now view-only.', {
+      action: 'Undo',
+      onAction: () => {
+        if (unlocked()) return;
+        state.token = token;
+        render();
+        saveToken(token);
+      },
+    });
+  }
 }
 
 function openUnlock(message) {
@@ -734,7 +797,7 @@ function parseAddNames() {
   const fresh = [];
   const dupes = [];
   for (const part of $('#addNames').value.split(/[\r\n,，、]/)) {
-    const name = part.replace(/\s+/g, ' ').trim().slice(0, 200);
+    const name = capitalizeName(part.replace(/\s+/g, ' ').trim().slice(0, 200));
     if (!name) continue;
     const n = norm(name);
     if (seen.has(n)) { dupes.push(name); continue; }
@@ -769,7 +832,11 @@ async function submitAdd(e) {
   const note = $('#addNote').value.trim();
   closeModal('#addModal');
   const rows = await addGuests(fresh, note);
-  if (rows) toast(rows.length === 1 ? `<b>${esc(rows[0].name)}</b> added` : `<b>${rows.length}</b> guests added`, { kind: 'success' });
+  if (!rows || !rows.length) return;
+  toast(rows.length === 1 ? `<b>${esc(rows[0].name)}</b> added` : `<b>${rows.length}</b> guests added`, {
+    kind: 'success', action: 'Undo',
+    onAction: () => removeGuests(rows.map((r) => r.id)),
+  });
 }
 
 let deleteArmed = false;
@@ -812,6 +879,12 @@ async function submitEdit(e) {
   }
   closeModal('#editModal');
   if (name === g.name && note === (g.note || '')) return;
+  saveGuest(id, name, note);
+}
+
+async function saveGuest(id, name, note, { silent = false } = {}) {
+  const g = state.guests.get(id);
+  if (!g) return;
   const before = { ...g };
   state.guests.set(id, { ...g, name, note, _pending: true });
   render();
@@ -820,7 +893,15 @@ async function submitEdit(e) {
     () => state.guests.set(id, before),
     `Couldn’t save ${g.name}.`,
   );
-  if (row) { state.guests.set(id, row); render(); toast('Saved', { kind: 'success', ms: 2000 }); }
+  if (!row) return;
+  state.guests.set(id, row);
+  render();
+  if (!silent) {
+    toast('Saved', {
+      kind: 'success', action: 'Undo',
+      onAction: () => saveGuest(id, before.name, before.note || '', { silent: true }),
+    });
+  }
 }
 
 // Clear sheet: deleting everyone takes typing the phrase. Case and stray

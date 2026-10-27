@@ -29,7 +29,11 @@ cookies set from JavaScript after 7 days.
 ## Using it
 
 - **Before the event:** Unlock, tap **Add guests**, paste names one per line or separated by commas.
-  Duplicates (ignoring case and accents) are flagged and skipped.
+  Duplicates (ignoring case and accents) are flagged and skipped. The first
+  letter of each name is capitalized (`john smith` becomes `John Smith`).
+- **Undo:** every change (check in, add, edit, delete, clear, lock) shows a
+  toast with **Undo** for a few seconds. Undoing a delete brings the guest
+  back with their note and arrival time.
 - **At the door:** type a few letters of the name and tap the row to check them
   in. The search clears for the next guest, and **Undo** is in the toast.
   - Enter checks in the match when only one person who hasn't arrived matches.

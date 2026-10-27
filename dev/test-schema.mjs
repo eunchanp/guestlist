@@ -18,7 +18,7 @@ const schema = readFileSync(schemaPath, 'utf8');
 // What the browser may execute. Adding a client RPC means adding it here too;
 // anything else showing up as executable is a missing `revoke ... from public`.
 const CLIENT_API = ['guestlist_add', 'guestlist_clear', 'guestlist_delete', 'guestlist_login',
-  'guestlist_set_arrived', 'guestlist_undo_clear', 'guestlist_update'];
+  'guestlist_restore', 'guestlist_set_arrived', 'guestlist_undo_clear', 'guestlist_update'];
 const CLIENT_ROLES = ['anon', 'authenticated'];
 
 const db = new PGlite({ extensions: { pgcrypto } });
@@ -132,6 +132,21 @@ await test('delete removes one guest', async () => {
   assert.equal((await one('select count(*)::int as n from guestlist_guests where id = $1', [id])).n, 0);
 });
 
+await test('restore brings a deleted guest back as they were, once', async () => {
+  const [g] = await add(token, ['Dot'], 'VIP', true);
+  await anon('select guestlist_delete($1, $2)', [token, g.id]);
+  const restore = () => anonOne('select * from guestlist_restore($1, $2, $3, $4, $5, $6)',
+    [token, g.id, g.name, g.note, g.arrived_at, g.created_at]);
+  const r = await restore();
+  assert.equal(r.id, g.id);
+  assert.equal(r.name, 'Dot');
+  assert.equal(r.note, 'VIP');
+  assert.equal(r.arrived_at.toISOString(), g.arrived_at.toISOString());
+  assert.equal(r.created_at.toISOString(), g.created_at.toISOString());
+  assert.equal((await restore()).id, g.id); // already back: no error, no duplicate
+  assert.equal((await one('select count(*)::int as n from guestlist_guests where id = $1', [g.id])).n, 1);
+});
+
 await test('names must be 1-200 characters and notes at most 500 (23514)', async () => {
   const { id } = await one(`select id from guestlist_guests where name = 'Cam'`);
   await anonFails('23514', 'select guestlist_update($1, $2, $3, $4)', [token, id, '   ', '']);
@@ -188,6 +203,7 @@ await test('every write refuses a wrong token (28P01)', async () => {
   await anonFails('28P01', `select guestlist_update('nope', $1, 'X', '')`, [id]);
   await anonFails('28P01', `select guestlist_set_arrived('nope', $1, true)`, [id]);
   await anonFails('28P01', `select guestlist_delete('nope', $1)`, [id]);
+  await anonFails('28P01', `select guestlist_restore('nope', $1, 'X', '', null, null)`, [missing]);
   await anonFails('28P01', `select guestlist_clear('nope')`);
   await anonFails('28P01', `select guestlist_undo_clear('nope', $1)`, [missing]);
   await anonFails('28P01', 'select guestlist_add(null, array[$1])', ['X']);

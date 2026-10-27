@@ -239,6 +239,32 @@ begin
   delete from public.guestlist_guests where id = p_id;
 end $$;
 
+-- Put a deleted guest back (Undo), with their id, note, arrival and creation
+-- times. If that id is already back (another device undid it), returns it as is.
+create or replace function public.guestlist_restore(
+  p_password   text,
+  p_id         uuid,
+  p_name       text,
+  p_note       text,
+  p_arrived_at timestamptz,
+  p_created_at timestamptz
+)
+returns public.guestlist_guests
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  r public.guestlist_guests;
+begin
+  perform public.guestlist_require(p_password);
+  insert into public.guestlist_guests (id, name, note, arrived_at, created_at)
+  values (p_id, btrim(p_name), btrim(coalesce(p_note, '')), p_arrived_at, coalesce(p_created_at, now()))
+  on conflict (id) do nothing;
+  select * into r from public.guestlist_guests where id = p_id;
+  return r;
+end $$;
+
 -- Remove every guest (to reuse the list for the next event), keeping a copy
 -- in guestlist_cleared for guestlist_undo_clear. Returns {batch, count}.
 -- DELETE rather than TRUNCATE so realtime tells the other devices; "where
@@ -303,6 +329,7 @@ revoke all on function public.guestlist_add(text, text[], text, boolean)        
 revoke all on function public.guestlist_update(text, uuid, text, text)             from public;
 revoke all on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) from public;
 revoke all on function public.guestlist_delete(text, uuid)                         from public;
+revoke all on function public.guestlist_restore(text, uuid, text, text, timestamptz, timestamptz) from public;
 revoke all on function public.guestlist_clear(text)                                from public;
 revoke all on function public.guestlist_undo_clear(text, uuid)                     from public;
 grant execute on function public.guestlist_login(text)                                to anon, authenticated;
@@ -310,6 +337,7 @@ grant execute on function public.guestlist_add(text, text[], text, boolean)     
 grant execute on function public.guestlist_update(text, uuid, text, text)             to anon, authenticated;
 grant execute on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) to anon, authenticated;
 grant execute on function public.guestlist_delete(text, uuid)                         to anon, authenticated;
+grant execute on function public.guestlist_restore(text, uuid, text, text, timestamptz, timestamptz) to anon, authenticated;
 grant execute on function public.guestlist_clear(text)                                to anon, authenticated;
 grant execute on function public.guestlist_undo_clear(text, uuid)                     to anon, authenticated;
 
