@@ -7,6 +7,8 @@ Supabase backend (the same project as qplex, tables prefixed `guestlist_`).
 ## Setup (once)
 
 1. Open the Supabase SQL editor for the qplex project and run `db/schema.sql`.
+   It's safe to re-run, so run it again whenever it changes (before deploying
+   the app that needs it).
 2. In the same editor, set the edit password:
    ```sql
    select guestlist_set_password('your-password');
@@ -17,6 +19,12 @@ Supabase backend (the same project as qplex, tables prefixed `guestlist_`).
 Viewing the list needs no password. Adding, editing, deleting and checking
 guests in all go through password-checked database functions, so the anon key
 in `js/config.js` can't modify anything on its own.
+
+Unlocking trades the password for a device token, kept in a cookie for up to
+400 days, so a phone stays unlocked between events until someone taps **Lock**
+or the password changes. The device never stores the password itself. The
+cookie is set by `api/session.js` (a Vercel function), because Safari deletes
+cookies set from JavaScript after 7 days.
 
 ## Using it
 
@@ -35,7 +43,8 @@ in `js/config.js` can't modify anything on its own.
 ## Local development
 
 Serve over HTTP: `python3 -m http.server 8124`, then open
-`http://localhost:8124`.
+`http://localhost:8124`. That server can't run `api/session.js`, so unlocking
+logs a 501 for it and sets the cookie from JavaScript instead.
 
 | URL | Data |
 | --- | --- |

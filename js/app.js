@@ -4,8 +4,8 @@
    the door, export to CSV. Vanilla JS, no build step.
 
    Reads are public; every write goes through a password-checked
-   Supabase RPC (see db/schema.sql). The password is remembered per
-   device in localStorage once it has been verified.
+   Supabase RPC (see db/schema.sql). Unlocking trades the password for
+   a device token, which the device keeps in a long-lived cookie.
    ============================================================ */
 
 // ---------- helpers ----------
@@ -21,10 +21,24 @@ const byName = (a, b) => collator.compare(a.name, b.name);
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch { /* private mode */ } };
 const buzz = (ms = 12) => { try { navigator.vibrate && navigator.vibrate(ms); } catch { /* unsupported */ } };
+const cookieGet = (name) => {
+  const hit = document.cookie.split('; ').find((c) => c.startsWith(`${name}=`));
+  return hit ? decodeURIComponent(hit.slice(name.length + 1)) : null;
+};
+const cookieSet = (name, value, maxAge) => {
+  const secure = location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${name}=${encodeURIComponent(value)}; Path=${COOKIE_PATH}; Max-Age=${maxAge}; SameSite=Lax${secure}`;
+};
 
-let pwKey = 'gl_pw';      // demo mode remembers its password under gl_demo_pw
+// The device token lives in a cookie (demo: gl_demo_token). Older builds kept
+// the password itself in localStorage (gl_pw / gl_demo_pw); boot() trades it in.
+let tokenCookie = 'gl_token';
+let legacyPwKey = 'gl_pw';
+const COOKIE_PATH = new URL('.', location.href).pathname; // /guestlist/ on eunchan.me
+const COOKIE_MAX_AGE = 400 * 24 * 60 * 60; // the longest browsers keep a cookie
 const FILTER_KEY = 'gl_filter';
 const DEMO_PASSWORD = 'demo';
+const DEMO_TOKEN = 'demo-device-token';
 const SUPABASE_LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
 
 function fmtTime(iso) {
@@ -52,6 +66,7 @@ function loadSupabaseLib() {
   });
 }
 
+// Write RPCs take the device token in p_password (the password itself works too).
 function createSupabaseStore() {
   let sb = null;
   const rpc = async (fn, args) => {
@@ -71,14 +86,15 @@ function createSupabaseStore() {
       if (error) throw new StoreError(error.message, error.code);
       return data || [];
     },
-    verify: (pw) => rpc('guestlist_verify', { p_password: pw }),
-    add: (pw, names, note, arrived) =>
-      rpc('guestlist_add', { p_password: pw, p_names: names, p_note: note, p_arrived: arrived }),
-    update: (pw, id, name, note) =>
-      rpc('guestlist_update', { p_password: pw, p_id: id, p_name: name, p_note: note }),
-    setArrived: (pw, id, arrived, at = null) =>
-      rpc('guestlist_set_arrived', { p_password: pw, p_id: id, p_arrived: arrived, p_at: at }),
-    remove: (pw, id) => rpc('guestlist_delete', { p_password: pw, p_id: id }),
+    // Resolves to the device token, or null for a wrong password.
+    login: (pw) => rpc('guestlist_login', { p_password: pw }),
+    add: (token, names, note, arrived) =>
+      rpc('guestlist_add', { p_password: token, p_names: names, p_note: note, p_arrived: arrived }),
+    update: (token, id, name, note) =>
+      rpc('guestlist_update', { p_password: token, p_id: id, p_name: name, p_note: note }),
+    setArrived: (token, id, arrived, at = null) =>
+      rpc('guestlist_set_arrived', { p_password: token, p_id: id, p_arrived: arrived, p_at: at }),
+    remove: (token, id) => rpc('guestlist_delete', { p_password: token, p_id: id }),
     // onEvent({type, row|id}); onStatus(true|false) as the realtime link goes up/down.
     subscribe(onEvent, onStatus) {
       sb.channel('guestlist')
@@ -96,7 +112,9 @@ function createLocalStore() {
   const KEY = 'gl_demo_guests';
   const read = () => { try { return JSON.parse(lsGet(KEY) || '[]'); } catch { return []; } };
   const write = (rows) => lsSet(KEY, JSON.stringify(rows));
-  const check = (pw) => { if (pw !== DEMO_PASSWORD) throw new StoreError('invalid password', '28P01'); };
+  const check = (token) => {
+    if (token !== DEMO_TOKEN && token !== DEMO_PASSWORD) throw new StoreError('invalid password', '28P01');
+  };
   const now = () => new Date().toISOString();
   const later = (v) => new Promise((r) => setTimeout(() => r(v), 120)); // feel like a network call
   const SEED = ['Ava Thompson', 'Benjamin Carter', 'Chloé Dubois', 'Daniel Kim', 'Elena Rossi',
@@ -115,9 +133,9 @@ function createLocalStore() {
       }
     },
     fetchAll: async () => read(),
-    verify: async (pw) => later(pw === DEMO_PASSWORD),
-    async add(pw, names, note, arrived) {
-      check(pw);
+    login: async (pw) => later(pw === DEMO_PASSWORD ? DEMO_TOKEN : null),
+    async add(token, names, note, arrived) {
+      check(token);
       const rows = names.map((n) => n.trim()).filter(Boolean).map((name) => ({
         id: crypto.randomUUID(), name, note: (note || '').trim(),
         arrived_at: arrived ? now() : null, created_at: now(), updated_at: now(),
@@ -125,8 +143,8 @@ function createLocalStore() {
       write([...read(), ...rows]);
       return later(rows);
     },
-    async update(pw, id, name, note) {
-      check(pw);
+    async update(token, id, name, note) {
+      check(token);
       const rows = read();
       const r = rows.find((x) => x.id === id);
       if (!r) throw new StoreError('guest not found', 'P0002');
@@ -134,8 +152,8 @@ function createLocalStore() {
       write(rows);
       return later({ ...r });
     },
-    async setArrived(pw, id, arrived, at = null) {
-      check(pw);
+    async setArrived(token, id, arrived, at = null) {
+      check(token);
       const rows = read();
       const r = rows.find((x) => x.id === id);
       if (!r) throw new StoreError('guest not found', 'P0002');
@@ -143,8 +161,8 @@ function createLocalStore() {
       write(rows);
       return later({ ...r });
     },
-    async remove(pw, id) {
-      check(pw);
+    async remove(token, id) {
+      check(token);
       write(read().filter((x) => x.id !== id));
       return later(null);
     },
@@ -161,7 +179,7 @@ const state = {
   guests: new Map(),       // id -> row
   query: '',
   filter: ['all', 'waiting', 'arrived'].includes(lsGet(FILTER_KEY)) ? lsGet(FILTER_KEY) : 'all',
-  password: null,          // set in pickStore()
+  token: null,             // device token (or a legacy password); set in pickStore()
   loaded: false,
   live: false,             // realtime link up
   online: navigator.onLine,
@@ -171,7 +189,7 @@ let store = null;
 let isDemo = false;
 let flashId = null;        // row to pulse after a check-in
 
-const unlocked = () => !!state.password;
+const unlocked = () => !!state.token;
 const allGuests = () => [...state.guests.values()];
 const findByName = (name) => {
   const n = norm(name);
@@ -418,7 +436,7 @@ function showLoadError(e) {
 // Run a write; on failure restore the snapshot and explain. Returns the result or undefined.
 async function mutate(fn, rollback, failMsg) {
   try {
-    return await fn(state.password);
+    return await fn(state.token);
   } catch (e) {
     rollback && rollback();
     render();
@@ -460,7 +478,7 @@ async function setArrived(id, arrived, { at = null, silent = false } = {}) {
     }
   }
   const row = await mutate(
-    (pw) => store.setArrived(pw, id, arrived, at),
+    (token) => store.setArrived(token, id, arrived, at),
     () => state.guests.set(id, before),
     `Couldn’t update ${g.name}.`,
   );
@@ -513,7 +531,7 @@ async function addGuests(names, note, { arrived = false } = {}) {
   if (arrived && temp[0]) flashId = temp[0].id;
   render();
   const rows = await mutate(
-    (pw) => store.add(pw, names, note, arrived),
+    (token) => store.add(token, names, note, arrived),
     () => temp.forEach((t) => state.guests.delete(t.id)),
     'Couldn’t add guests.',
   );
@@ -548,7 +566,7 @@ async function removeGuest(id, { silent = false } = {}) {
   state.guests.delete(id);
   render();
   const ok = await mutate(
-    (pw) => store.remove(pw, id).then(() => true),
+    (token) => store.remove(token, id).then(() => true),
     () => state.guests.set(id, g),
     `Couldn’t delete ${g.name}.`,
   );
@@ -556,9 +574,51 @@ async function removeGuest(id, { silent = false } = {}) {
 }
 
 // ---------- lock / unlock ----------
+// Keep the token until the device is locked. Safari expires cookies written by
+// JS after 7 days, so ask api/session to set it from the server; without that
+// endpoint (local dev) fall back to setting it here.
+async function saveToken(token) {
+  lsSet(legacyPwKey, null);
+  let saved = false;
+  try {
+    const res = await fetch('api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: tokenCookie, value: token, path: COOKIE_PATH }),
+    });
+    saved = res.ok && cookieGet(tokenCookie) === token;
+  } catch { /* offline, or no endpoint */ }
+  if (state.token !== token) {
+    // Locked while the request was out: don't leave this token behind.
+    if (cookieGet(tokenCookie) === token) cookieSet(tokenCookie, '', 0);
+  } else if (!saved) {
+    cookieSet(tokenCookie, token, COOKIE_MAX_AGE);
+  }
+}
+
+function forgetToken() {
+  cookieSet(tokenCookie, '', 0);
+  lsSet(legacyPwKey, null);
+}
+
+// Devices unlocked by an older build kept the password itself. Writes still
+// accept it, so stay unlocked and quietly trade it for a token.
+async function upgradeLegacyPassword() {
+  const pw = lsGet(legacyPwKey);
+  if (!pw) return;
+  if (state.token !== pw) { lsSet(legacyPwKey, null); return; }
+  try {
+    const token = await store.login(pw);
+    if (state.token !== pw) return; // locked or re-unlocked meanwhile
+    if (!token) { lock(false); return; } // the password was changed since
+    state.token = token;
+    saveToken(token);
+  } catch { /* offline: try again on the next launch */ }
+}
+
 function lock(withToast = true) {
-  state.password = null;
-  lsSet(pwKey, null);
+  state.token = null;
+  forgetToken();
   closeAllModals();
   render();
   if (withToast) toast('Locked. This device is now view-only.');
@@ -579,19 +639,19 @@ async function submitUnlock(e) {
   btn.disabled = true;
   btn.textContent = 'Checking…';
   try {
-    const ok = await store.verify(pw);
-    if (!ok) {
+    const token = await store.login(pw);
+    if (!token) {
       $('#unlockError').textContent = 'Wrong password. Try again.';
       $('#unlockError').hidden = false;
       $('#unlockPw').select();
       buzz([10, 60, 10]);
       return;
     }
-    state.password = pw;
-    lsSet(pwKey, pw);
+    state.token = token;
     closeModal('#unlockModal');
     render();
     toast('Unlocked. Tap a name to check them in.', { kind: 'success' });
+    saveToken(token);
   } catch (err) {
     const notSet = err && err.code === '28000';
     $('#unlockError').textContent = notSet
@@ -713,7 +773,7 @@ async function submitEdit(e) {
   state.guests.set(id, { ...g, name, note, _pending: true });
   render();
   const row = await mutate(
-    (pw) => store.update(pw, id, name, note),
+    (token) => store.update(token, id, name, note),
     () => state.guests.set(id, before),
     `Couldn’t save ${g.name}.`,
   );
@@ -860,9 +920,9 @@ function pickStore() {
   const badge = $('#envBadge');
   if (isDemo) { badge.hidden = false; badge.textContent = 'DEMO'; badge.className = 'env-badge demo'; }
   else if (local) { badge.hidden = false; badge.textContent = 'LIVE DB'; badge.className = 'env-badge live'; }
-  // Demo and live remember different passwords.
-  if (isDemo) pwKey = 'gl_demo_pw';
-  state.password = lsGet(pwKey);
+  // Demo and live remember different tokens.
+  if (isDemo) { tokenCookie = 'gl_demo_token'; legacyPwKey = 'gl_demo_pw'; }
+  state.token = cookieGet(tokenCookie) || lsGet(legacyPwKey);
   return isDemo ? createLocalStore() : createSupabaseStore();
 }
 
@@ -870,6 +930,7 @@ let booted = false;
 async function boot() {
   try {
     await store.init();
+    upgradeLegacyPassword();
     const rows = await store.fetchAll();
     state.guests = new Map(rows.map((r) => [r.id, r]));
     state.loaded = true;

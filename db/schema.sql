@@ -15,6 +15,9 @@
 --         select guestlist_set_password('your-password');
 --     That function is not executable by the anon/authenticated roles, so it
 --     can only be run from the SQL editor.
+--   * Unlocking trades the password for a device token (guestlist_login),
+--     which is what devices keep. The token is derived from the password
+--     hash, so changing the password revokes every device at once.
 -- ============================================================
 
 create extension if not exists pgcrypto with schema extensions;
@@ -74,7 +77,18 @@ begin
   on conflict (id) do update set password_hash = excluded.password_hash;
 end $$;
 
--- Internal: raise unless the password matches. Not callable by clients.
+-- Internal: the device token for a password hash. Not callable by clients.
+create or replace function public.guestlist_device_token(p_hash text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select encode(extensions.hmac('guestlist device token', p_hash, 'sha256'), 'hex')
+$$;
+
+-- Internal: raise unless p_password is the device token or the password
+-- itself. Not callable by clients.
 create or replace function public.guestlist_require(p_password text)
 returns void
 language plpgsql
@@ -88,27 +102,37 @@ begin
   if h is null then
     raise exception 'guestlist password is not set' using errcode = '28000';
   end if;
+  -- The token is the cheap check, so test it before bcrypt.
+  if p_password = public.guestlist_device_token(h) then
+    return;
+  end if;
   if p_password is null or extensions.crypt(p_password, h) <> h then
     raise exception 'invalid password' using errcode = '28P01';
   end if;
 end $$;
 
--- Client: check a password before unlocking the UI.
-create or replace function public.guestlist_verify(p_password text)
-returns boolean
+-- Client: unlock. Returns the device token, or null for a wrong password.
+-- (Replaces guestlist_verify, which only said yes or no.)
+drop function if exists public.guestlist_verify(text);
+create or replace function public.guestlist_login(p_password text)
+returns text
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  h text;
 begin
   perform public.guestlist_require(p_password);
-  return true;
+  select password_hash into h from public.guestlist_secret where id = 1;
+  return public.guestlist_device_token(h);
 exception when sqlstate '28P01' then
-  return false;
+  return null;
 end $$;
 
 -- ------------------------------------------------------------
 -- Write API (all password-checked)
+-- p_password takes the device token from guestlist_login, or the password.
 -- ------------------------------------------------------------
 
 -- Add one or more guests. Blank names are skipped. Returns the new rows.
@@ -203,13 +227,14 @@ end $$;
 -- Function privileges: Postgres grants EXECUTE to PUBLIC by default, so
 -- revoke everything first, then expose only the client API.
 revoke all on function public.guestlist_set_password(text)                         from public, anon, authenticated;
+revoke all on function public.guestlist_device_token(text)                         from public, anon, authenticated;
 revoke all on function public.guestlist_require(text)                              from public, anon, authenticated;
-revoke all on function public.guestlist_verify(text)                               from public;
+revoke all on function public.guestlist_login(text)                                from public;
 revoke all on function public.guestlist_add(text, text[], text, boolean)           from public;
 revoke all on function public.guestlist_update(text, uuid, text, text)             from public;
 revoke all on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) from public;
 revoke all on function public.guestlist_delete(text, uuid)                         from public;
-grant execute on function public.guestlist_verify(text)                               to anon, authenticated;
+grant execute on function public.guestlist_login(text)                                to anon, authenticated;
 grant execute on function public.guestlist_add(text, text[], text, boolean)           to anon, authenticated;
 grant execute on function public.guestlist_update(text, uuid, text, text)             to anon, authenticated;
 grant execute on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) to anon, authenticated;
