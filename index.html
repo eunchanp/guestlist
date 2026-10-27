@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Guestlist">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Guestlist</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%23111214'/%3E%3Cpath d='M28 52l15 15 30-32' fill='none' stroke='%2334d399' stroke-width='11' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="top" id="top">
+    <div class="top-row">
+      <h1 class="brand">Guestlist</h1>
+      <span class="env-badge" id="envBadge" hidden></span>
+      <span class="conn" id="conn" hidden></span>
+      <div class="top-actions">
+        <button class="icon-btn" id="exportBtn" type="button" aria-label="Export CSV" title="Export CSV">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19h14"/></svg>
+          <span class="icon-btn-label">CSV</span>
+        </button>
+        <button class="icon-btn" id="lockBtn" type="button"></button>
+      </div>
+    </div>
+
+    <div class="progress" id="progress">
+      <div class="progress-text"><strong id="arrivedCount">0</strong> of <span id="totalCount">0</span> arrived</div>
+      <div class="progress-bar" aria-hidden="true"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></svg>
+      <input id="search" class="search" type="search" placeholder="Search names" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" aria-label="Search guests">
+      <button class="search-clear" id="searchClear" type="button" aria-label="Clear search" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>
+      </button>
+    </div>
+
+    <div class="filters" role="tablist" aria-label="Filter guests">
+      <button type="button" role="tab" class="filter" data-filter="all">All <span class="fcount" id="fAll">0</span></button>
+      <button type="button" role="tab" class="filter" data-filter="waiting">Not here <span class="fcount" id="fWaiting">0</span></button>
+      <button type="button" role="tab" class="filter" data-filter="arrived">Arrived <span class="fcount" id="fArrived">0</span></button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="main">
+    <ul class="list" id="list" aria-live="polite"></ul>
+    <div class="empty" id="empty" hidden></div>
+  </main>
+
+  <button class="fab" id="addBtn" type="button" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    Add guests
+  </button>
+
+  <!-- Unlock -->
+  <div class="overlay" id="unlockModal" hidden>
+    <form class="sheet" id="unlockForm" autocomplete="on">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <h2 class="sheet-title">Unlock editing</h2>
+      <p class="sheet-sub">Enter the password to check guests in and edit the list. This device stays unlocked until you lock it.</p>
+      <input type="text" name="username" value="guestlist" autocomplete="username" hidden>
+      <input class="field" id="unlockPw" type="password" placeholder="Password" autocomplete="current-password" enterkeyhint="done" aria-label="Password">
+      <p class="form-error" id="unlockError" hidden></p>
+      <div class="sheet-actions">
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+        <button class="btn primary" type="submit" id="unlockSubmit">Unlock</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Add guests -->
+  <div class="overlay" id="addModal" hidden>
+    <form class="sheet" id="addForm">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <h2 class="sheet-title">Add guests</h2>
+      <p class="sheet-sub">One name per line. Paste a whole list at once if you like.</p>
+      <textarea class="field area" id="addNames" rows="6" placeholder="Jane Doe&#10;John Smith" autocapitalize="words" autocomplete="off" aria-label="Names, one per line"></textarea>
+      <input class="field" id="addNote" type="text" maxlength="500" placeholder="Note for these guests (optional)" autocomplete="off" aria-label="Note">
+      <p class="form-hint" id="addHint"></p>
+      <div class="sheet-actions">
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+        <button class="btn primary" type="submit" id="addSubmit" disabled>Add</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Edit guest -->
+  <div class="overlay" id="editModal" hidden>
+    <form class="sheet" id="editForm">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <h2 class="sheet-title">Edit guest</h2>
+      <label class="label" for="editName">Name</label>
+      <input class="field" id="editName" type="text" maxlength="200" autocapitalize="words" autocomplete="off">
+      <label class="label" for="editNote">Note</label>
+      <input class="field" id="editNote" type="text" maxlength="500" placeholder="e.g. +1, VIP, band" autocomplete="off">
+      <div class="edit-status" id="editStatus"></div>
+      <p class="form-error" id="editError" hidden></p>
+      <div class="sheet-actions split">
+        <button class="btn danger-ghost" type="button" id="editDelete">Delete</button>
+        <span class="spacer"></span>
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+        <button class="btn primary" type="submit" id="editSubmit">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap" aria-live="assertive"></div>
+
+  <!-- config.js sets window.SUPABASE_URL / window.SUPABASE_ANON_KEY (public-safe).
+       Supabase JS is loaded lazily by app.js, so demo mode works offline. -->
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

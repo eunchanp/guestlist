@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "import os, http.server as h; h.test(HandlerClass=h.SimpleHTTPRequestHandler, port=int(os.environ.get('PORT', 8124)), bind='127.0.0.1')"
+      ],
+      "port": 8124,
+      "autoPort": true
+    }
+  ]
+}
