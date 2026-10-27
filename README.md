@@ -39,12 +39,22 @@ cookies set from JavaScript after 7 days.
   - Several door phones stay in sync live.
 - **Export:** the **CSV** button downloads everyone with their status and
   arrival time.
+- **Next event:** **Clear list** (under the full list, while unlocked)
+  deletes every guest on every device. It asks you to type
+  *In hoc signo vinces* first and can't be undone, so export a CSV before.
 
 ## Local development
 
 Serve over HTTP: `python3 -m http.server 8124`, then open
 `http://localhost:8124`. That server can't run `api/session.js`, so unlocking
-logs a 501 for it and sets the cookie from JavaScript instead.
+logs a 501 for it and sets the cookie from JavaScript instead. To test the
+real cookie path, run `node dev/serve.cjs` and open
+`http://127.0.0.1:8126/guestlist/`. It serves the app under `/guestlist/`
+like eunchan.me and runs `api/session.js` like Vercel.
+
+Before running a changed `db/schema.sql` in Supabase, test it locally:
+`cd dev && npm install` (once), then `npm test`. It runs the schema in an
+in-memory Postgres and checks the security rules and every database function.
 
 | URL | Data |
 | --- | --- |

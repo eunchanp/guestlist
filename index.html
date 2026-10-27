@@ -53,6 +53,12 @@
   <main class="main">
     <ul class="list" id="list" aria-live="polite"></ul>
     <div class="empty" id="empty" hidden></div>
+    <div class="list-foot" id="listFoot" hidden>
+      <button class="foot-btn" id="clearBtn" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/></svg>
+        Clear list
+      </button>
+    </div>
   </main>
 
   <button class="fab" id="addBtn" type="button" hidden>
@@ -108,6 +114,22 @@
         <span class="spacer"></span>
         <button class="btn ghost" type="button" data-close>Cancel</button>
         <button class="btn primary" type="submit" id="editSubmit">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Clear the whole list -->
+  <div class="overlay" id="clearModal" hidden>
+    <form class="sheet" id="clearForm">
+      <div class="sheet-grab" aria-hidden="true"></div>
+      <h2 class="sheet-title">Clear the list?</h2>
+      <p class="sheet-sub" id="clearSub"></p>
+      <label class="label" for="clearPhrase">Type <span class="phrase" id="clearPhraseShown"></span> to confirm</label>
+      <input class="field" id="clearPhrase" type="text" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" enterkeyhint="done">
+      <p class="form-hint">Want a record? <button type="button" class="link" data-export>Export CSV</button> first.</p>
+      <div class="sheet-actions">
+        <button class="btn ghost" type="button" data-close>Cancel</button>
+        <button class="btn danger" type="submit" id="clearSubmit" disabled>Clear list</button>
       </div>
     </form>
   </div>

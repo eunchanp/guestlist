@@ -224,6 +224,25 @@ begin
   delete from public.guestlist_guests where id = p_id;
 end $$;
 
+-- Remove every guest (to reuse the list for the next event). Returns how
+-- many were removed. DELETE rather than TRUNCATE so realtime tells the other
+-- devices; "where true" because Supabase's pg_safeupdate rejects a DELETE
+-- without a WHERE clause.
+create or replace function public.guestlist_clear(p_password text)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  n integer;
+begin
+  perform public.guestlist_require(p_password);
+  delete from public.guestlist_guests where true;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
 -- Function privileges: Postgres grants EXECUTE to PUBLIC by default, so
 -- revoke everything first, then expose only the client API.
 revoke all on function public.guestlist_set_password(text)                         from public, anon, authenticated;
@@ -234,11 +253,13 @@ revoke all on function public.guestlist_add(text, text[], text, boolean)        
 revoke all on function public.guestlist_update(text, uuid, text, text)             from public;
 revoke all on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) from public;
 revoke all on function public.guestlist_delete(text, uuid)                         from public;
+revoke all on function public.guestlist_clear(text)                                from public;
 grant execute on function public.guestlist_login(text)                                to anon, authenticated;
 grant execute on function public.guestlist_add(text, text[], text, boolean)           to anon, authenticated;
 grant execute on function public.guestlist_update(text, uuid, text, text)             to anon, authenticated;
 grant execute on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) to anon, authenticated;
 grant execute on function public.guestlist_delete(text, uuid)                         to anon, authenticated;
+grant execute on function public.guestlist_clear(text)                                to anon, authenticated;
 
 -- ------------------------------------------------------------
 -- Realtime: push changes to every open device (door phones stay in sync).

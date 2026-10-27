@@ -19,6 +19,7 @@
   --warn-soft: #fdf1df;
   --danger: #d4352b;
   --danger-soft: #fdebea;
+  --on-danger: #ffffff;
   --info-soft: #e9eefc;
   --info-text: #2c48a8;
   --mark: #fde68a;
@@ -46,6 +47,7 @@
     --warn-soft: #33270f;
     --danger: #f87171;
     --danger-soft: #3a1b1b;
+    --on-danger: #2a0b0b;
     --info-soft: #1c2440;
     --info-text: #a8b8f5;
     --mark: #5c4a12;
@@ -231,6 +233,17 @@ body:not(.is-unlocked) .guest.arrived .g-check { opacity: 1; }
 .empty-title.muted { color: var(--muted); font-weight: 500; }
 .empty .list { text-align: left; margin-top: 14px; }
 
+.list-foot { display: flex; justify-content: center; padding-top: 32px; }
+.foot-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 44px; padding: 0 18px 0 14px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: transparent; color: var(--danger); cursor: pointer;
+  font-size: 15px; font-weight: 600;
+}
+.foot-btn svg { width: 18px; height: 18px; }
+.foot-btn:active { transform: scale(.97); background: var(--danger-soft); }
+
 .link {
   border: 0; background: none; padding: 0; cursor: pointer;
   color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
@@ -306,8 +319,10 @@ body:not(.is-unlocked) .guest.arrived .g-check { opacity: 1; }
 .btn:disabled { opacity: .4; cursor: default; transform: none; }
 .btn.primary { background: var(--accent); color: var(--accent-text); }
 .btn.ghost { background: transparent; border-color: var(--border); }
+.btn.danger { background: var(--danger); color: var(--on-danger); }
 .btn.danger-ghost { background: transparent; color: var(--danger); padding: 0 12px; }
-.btn.danger-ghost.armed { background: var(--danger); color: #fff; }
+.btn.danger-ghost.armed { background: var(--danger); color: var(--on-danger); }
+.phrase { color: var(--text); font-weight: 700; }
 @media (max-width: 400px) {
   .sheet-actions.split { flex-wrap: wrap; }
   .sheet-actions.split .spacer { display: none; }
@@ -351,7 +366,7 @@ body.modal-open .toast-wrap { top: calc(12px + env(safe-area-inset-top)); bottom
   padding: 3px 7px; border-radius: 6px;
 }
 .env-badge.demo { background: #64748b; color: #fff; }
-.env-badge.live { background: var(--danger); color: #fff; }
+.env-badge.live { background: var(--danger); color: var(--on-danger); }
 
 @media (max-width: 380px) {
   .icon-btn-label { display: none; }

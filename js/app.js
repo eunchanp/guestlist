@@ -39,6 +39,7 @@ const COOKIE_MAX_AGE = 400 * 24 * 60 * 60; // the longest browsers keep a cookie
 const FILTER_KEY = 'gl_filter';
 const DEMO_PASSWORD = 'demo';
 const DEMO_TOKEN = 'demo-device-token';
+const CLEAR_PHRASE = 'In hoc signo vinces'; // typed to confirm clearing the whole list
 const SUPABASE_LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
 
 function fmtTime(iso) {
@@ -95,6 +96,8 @@ function createSupabaseStore() {
     setArrived: (token, id, arrived, at = null) =>
       rpc('guestlist_set_arrived', { p_password: token, p_id: id, p_arrived: arrived, p_at: at }),
     remove: (token, id) => rpc('guestlist_delete', { p_password: token, p_id: id }),
+    // Resolves to how many guests were deleted.
+    clear: (token) => rpc('guestlist_clear', { p_password: token }),
     // onEvent({type, row|id}); onStatus(true|false) as the realtime link goes up/down.
     subscribe(onEvent, onStatus) {
       sb.channel('guestlist')
@@ -165,6 +168,12 @@ function createLocalStore() {
       check(token);
       write(read().filter((x) => x.id !== id));
       return later(null);
+    },
+    async clear(token) {
+      check(token);
+      const n = read().length;
+      write([]);
+      return later(n);
     },
     subscribe(onEvent, onStatus) {
       onStatus(true);
@@ -332,6 +341,8 @@ function render() {
   const showAdd = unlocked() && q && !findByName(q).length;
   $('#list').innerHTML = rows.map(guestRow).join('') + (showAdd && rows.length ? addRows(q, true) : '');
   flashId = null;
+  // Clearing sits under the full list only, well away from the door flow.
+  $('#listFoot').hidden = !(unlocked() && all.length && !q && state.filter === 'all');
 
   const empty = $('#empty');
   if (rows.length) { empty.hidden = true; return; }
@@ -780,6 +791,34 @@ async function submitEdit(e) {
   if (row) { state.guests.set(id, row); render(); toast('Saved', { kind: 'success', ms: 2000 }); }
 }
 
+// Clear sheet: deleting everyone takes typing the phrase. Case and spacing
+// are forgiven (phone keyboards capitalize and autocorrect); the words aren't.
+const clearPhraseOk = () => norm($('#clearPhrase').value) === norm(CLEAR_PHRASE);
+function openClear() {
+  const all = allGuests();
+  const arrived = all.filter((g) => g.arrived_at).length;
+  const who = all.length === 1 ? '<b>1 guest</b>' : `all <b>${all.length} guests</b>`;
+  $('#clearSub').innerHTML = `This deletes ${who}${arrived ? ` (${arrived} checked in)` : ''} from every device. It can’t be undone.`;
+  $('#clearPhraseShown').textContent = CLEAR_PHRASE;
+  $('#clearPhrase').value = '';
+  $('#clearSubmit').disabled = true;
+  openModal('#clearModal', '#clearPhrase');
+}
+async function submitClear(e) {
+  e.preventDefault();
+  if (!clearPhraseOk()) return;
+  closeModal('#clearModal');
+  const before = state.guests;
+  state.guests = new Map();
+  render();
+  const n = await mutate(
+    (token) => store.clear(token),
+    () => { state.guests = before; },
+    'Couldn’t clear the list.',
+  );
+  if (n !== undefined) toast(`List cleared, <b>${n}</b> ${n === 1 ? 'guest' : 'guests'} deleted`);
+}
+
 // ---------- CSV export ----------
 function csvCell(v) {
   let s = String(v ?? '');
@@ -855,6 +894,7 @@ function wire() {
     if (t.closest('[data-addname]')) { walkIn(state.query.replace(/\s+/g, ' ').trim(), false); return; }
     if (t.closest('[data-showall]')) { state.filter = 'all'; lsSet(FILTER_KEY, 'all'); render(); return; }
     if (t.closest('[data-retry]')) { setBanner(''); boot(); return; }
+    if (t.closest('[data-export]')) { exportCsv(); return; }
     const ea = t.closest('[data-edit-arrive]');
     if (ea && state.editingId) {
       const id = state.editingId;
@@ -883,6 +923,9 @@ function wire() {
     closeModal('#editModal');
     removeGuest(id);
   });
+  $('#clearBtn').addEventListener('click', openClear);
+  $('#clearForm').addEventListener('submit', submitClear);
+  $('#clearPhrase').addEventListener('input', () => { $('#clearSubmit').disabled = !clearPhraseOk(); });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {

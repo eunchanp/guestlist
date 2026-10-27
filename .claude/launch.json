@@ -10,6 +10,14 @@
       ],
       "port": 8124,
       "autoPort": true
+    },
+    {
+      "name": "vercel-local",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dev/serve.cjs"],
+      "port": 8126,
+      "autoPort": true,
+      "url": "http://127.0.0.1:8126"
     }
   ]
 }
