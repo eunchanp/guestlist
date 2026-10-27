@@ -231,14 +231,18 @@ function visibleGuests() {
   if (!q) {
     // The Arrived tab reads like a door log: most recent first.
     if (state.filter === 'arrived') return rows.sort((a, b) => b.arrived_at.localeCompare(a.arrived_at));
-    return rows.sort(byName);
+    rows.sort(byName);
+  } else {
+    const words = q.split(' ');
+    rows = rows
+      .map((g) => ({ g, s: matchScore(g, words) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || byName(a.g, b.g))
+      .map((x) => x.g);
   }
-  const words = q.split(' ');
-  return rows
-    .map((g) => ({ g, s: matchScore(g, words) }))
-    .filter((x) => x.s > 0)
-    .sort((a, b) => b.s - a.s || byName(a.g, b.g))
-    .map((x) => x.g);
+  // All lists who's still expected before who's here (listRows() heads each group).
+  if (state.filter !== 'all') return rows;
+  return [...rows.filter((g) => !g.arrived_at), ...rows.filter((g) => g.arrived_at)];
 }
 
 // ---------- rendering ----------
@@ -299,6 +303,15 @@ function guestRow(g) {
   </li>`;
 }
 
+// The All tab gets a header over each group, once both have someone in them.
+function listRows(rows) {
+  const split = state.filter === 'all' ? rows.findIndex((g) => g.arrived_at) : -1;
+  if (split <= 0) return rows.map(guestRow).join('');
+  const head = (label, n) => `<li class="group-head">${label} <span class="group-count">${n}</span></li>`;
+  return head('Not here', split) + rows.slice(0, split).map(guestRow).join('')
+    + head('Arrived', rows.length - split) + rows.slice(split).map(guestRow).join('');
+}
+
 function addRows(q, hasMatches) {
   // Walk-ins: a searched name can be added (and checked in) without leaving the search.
   // Under real matches it shrinks to one quiet row so it never competes with them.
@@ -339,7 +352,7 @@ function render() {
   const rows = visibleGuests();
   const q = state.query.trim();
   const showAdd = unlocked() && q && !findByName(q).length;
-  $('#list').innerHTML = rows.map(guestRow).join('') + (showAdd && rows.length ? addRows(q, true) : '');
+  $('#list').innerHTML = listRows(rows) + (showAdd && rows.length ? addRows(q, true) : '');
   flashId = null;
   // Clearing sits under the full list only, well away from the door flow.
   $('#listFoot').hidden = !(unlocked() && all.length && !q && state.filter === 'all');

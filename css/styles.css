@@ -213,6 +213,15 @@ body:not(.is-unlocked) .guest.arrived .g-check { opacity: 1; }
 .guest.shake { animation: shake .35s ease; }
 @keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
 
+/* All tab group headers: "Not here", then "Arrived" */
+.group-head {
+  padding: 22px 4px 4px;
+  font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted);
+}
+.group-head:first-child { padding-top: 10px; }
+.group-count { margin-left: 4px; font-weight: 500; color: var(--faint); font-variant-numeric: tabular-nums; }
+
 /* Walk-in add row */
 .add-row { display: flex; flex-direction: column; gap: 8px; padding: 14px 0 4px; }
 .add-btn {

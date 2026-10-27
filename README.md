@@ -36,6 +36,8 @@ cookies set from JavaScript after 7 days.
   - Tapping someone who already arrived warns you instead of undoing it.
   - A name that isn't on the list can be added and checked in from the search
     results (walk-ins).
+  - The **All** tab lists who's **Not here** first, then who **Arrived**,
+    under a heading for each, and so do its search results.
   - Several door phones stay in sync live.
 - **Export:** the **CSV** button downloads everyone with their status and
   arrival time.

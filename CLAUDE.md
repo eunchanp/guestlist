@@ -143,7 +143,10 @@ throws the same codes, so every UI path works in demo:
   search, duplicate detection and the clear phrase. `matchScore()` needs every
   query word to hit: name prefix 4, word prefix 3, substring 1, note 0.5. No
   query: Arrived tab sorts most recent first, otherwise by name
-  (`Intl.Collator`, numeric). `highlight()` maps `<mark>` back onto accented characters.
+  (`Intl.Collator`, numeric). The All tab (search or not) then lists every
+  not-arrived guest before every arrived one, and `listRows()` puts a "Not
+  here" / "Arrived" header over each group when both are non-empty.
+  `highlight()` maps `<mark>` back onto accented characters.
 - **Sheets and toasts:** `.overlay > form.sheet`; `openModal(sel, focusSel)` /
   `closeModal(sel)` restore focus, and Escape or a backdrop tap closes.
   `toast(html, { action, onAction, kind, ms })` shows one toast at a time;
