@@ -168,7 +168,7 @@ throws the same codes, so every UI path works in demo:
   matches, one quiet "Not listed? Add X & check in" row; with no matches,
   "Add X & check in" plus "Add to list only".
 - Every check-in toast has Undo. `/` focuses search from anywhere.
-- Add sheet: one name per line, duplicates (against the list and within the
+- Add sheet: one name per line or comma (also `，` `、`), duplicates (against the list and within the
   paste) flagged and skipped, Cmd/Ctrl+Enter submits.
 - Delete is a two-tap arm in the edit sheet. **Clear list** shows only under
   the full, unfiltered, unsearched list (never in the door flow). It needs

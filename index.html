@@ -87,9 +87,8 @@
     <form class="sheet" id="addForm">
       <div class="sheet-grab" aria-hidden="true"></div>
       <h2 class="sheet-title">Add guests</h2>
-      <p class="sheet-sub">One name per line. Paste a whole list at once if you like.</p>
-      <textarea class="field area" id="addNames" rows="6" placeholder="Jane Doe&#10;John Smith" autocapitalize="words" autocomplete="off" aria-label="Names, one per line"></textarea>
-      <input class="field" id="addNote" type="text" maxlength="500" placeholder="Note for these guests (optional)" autocomplete="off" aria-label="Note">
+      <textarea class="field area" id="addNames" rows="6" placeholder="" autocapitalize="words" autocomplete="off" aria-label="Names, one per line or separated by commas"></textarea>
+      <input class="field" id="addNote" type="text" maxlength="500" placeholder="Note (optional)" autocomplete="off" aria-label="Note">
       <p class="form-hint" id="addHint"></p>
       <div class="sheet-actions">
         <button class="btn ghost" type="button" data-close>Cancel</button>

@@ -727,13 +727,14 @@ function closeModal(sel) {
 }
 function closeAllModals() { $$('.overlay').forEach((m) => closeModal(`#${m.id}`)); }
 
-// Add sheet: parse lines, skip blanks + duplicates (against the list and within the paste).
+// Add sheet: split on lines and commas (incl. full-width and ideographic ones), skip
+// blanks + duplicates (against the list and within the paste).
 function parseAddNames() {
   const seen = new Set(allGuests().map((g) => norm(g.name)));
   const fresh = [];
   const dupes = [];
-  for (const line of $('#addNames').value.split(/\r?\n/)) {
-    const name = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+  for (const part of $('#addNames').value.split(/[\r\n,，、]/)) {
+    const name = part.replace(/\s+/g, ' ').trim().slice(0, 200);
     if (!name) continue;
     const n = norm(name);
     if (seen.has(n)) { dupes.push(name); continue; }

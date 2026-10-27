@@ -28,7 +28,7 @@ cookies set from JavaScript after 7 days.
 
 ## Using it
 
-- **Before the event:** Unlock, tap **Add guests**, paste names one per line.
+- **Before the event:** Unlock, tap **Add guests**, paste names one per line or separated by commas.
   Duplicates (ignoring case and accents) are flagged and skipped.
 - **At the door:** type a few letters of the name and tap the row to check them
   in. The search clears for the next guest, and **Undo** is in the toast.
