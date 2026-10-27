@@ -39,7 +39,7 @@ const COOKIE_MAX_AGE = 400 * 24 * 60 * 60; // the longest browsers keep a cookie
 const FILTER_KEY = 'gl_filter';
 const DEMO_PASSWORD = 'demo';
 const DEMO_TOKEN = 'demo-device-token';
-const CLEAR_PHRASE = 'In hoc signo vinces'; // typed to confirm clearing the whole list
+const CLEAR_PHRASE = 'clear'; // typed to confirm clearing the whole list
 const SUPABASE_LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js';
 
 function fmtTime(iso) {
@@ -96,8 +96,11 @@ function createSupabaseStore() {
     setArrived: (token, id, arrived, at = null) =>
       rpc('guestlist_set_arrived', { p_password: token, p_id: id, p_arrived: arrived, p_at: at }),
     remove: (token, id) => rpc('guestlist_delete', { p_password: token, p_id: id }),
-    // Resolves to how many guests were deleted.
+    // Resolves to { batch, count }. The server keeps the deleted rows until
+    // the next clear, and undoClear(batch) resolves to the restored rows
+    // ([] if that clear was already undone or replaced).
     clear: (token) => rpc('guestlist_clear', { p_password: token }),
+    undoClear: (token, batch) => rpc('guestlist_undo_clear', { p_password: token, p_batch: batch }),
     // onEvent({type, row|id}); onStatus(true|false) as the realtime link goes up/down.
     subscribe(onEvent, onStatus) {
       sb.channel('guestlist')
@@ -113,6 +116,7 @@ function createSupabaseStore() {
 // ---------- storage: local demo (single device, no network) ----------
 function createLocalStore() {
   const KEY = 'gl_demo_guests';
+  const CLEARED_KEY = 'gl_demo_cleared'; // { batch, rows } from the last clear
   const read = () => { try { return JSON.parse(lsGet(KEY) || '[]'); } catch { return []; } };
   const write = (rows) => lsSet(KEY, JSON.stringify(rows));
   const check = (token) => {
@@ -171,9 +175,23 @@ function createLocalStore() {
     },
     async clear(token) {
       check(token);
-      const n = read().length;
+      const rows = read();
+      const batch = crypto.randomUUID();
+      lsSet(CLEARED_KEY, JSON.stringify({ batch, rows }));
       write([]);
-      return later(n);
+      return later({ batch, count: rows.length });
+    },
+    async undoClear(token, batch) {
+      check(token);
+      let cleared = null;
+      try { cleared = JSON.parse(lsGet(CLEARED_KEY)); } catch { /* nothing to undo */ }
+      if (!cleared || cleared.batch !== batch) return later([]);
+      lsSet(CLEARED_KEY, null);
+      const rows = read();
+      const have = new Set(rows.map((r) => r.id));
+      const back = cleared.rows.filter((r) => !have.has(r.id)).map((r) => ({ ...r, updated_at: now() }));
+      write([...rows, ...back]);
+      return later(back);
     },
     subscribe(onEvent, onStatus) {
       onStatus(true);
@@ -804,14 +822,14 @@ async function submitEdit(e) {
   if (row) { state.guests.set(id, row); render(); toast('Saved', { kind: 'success', ms: 2000 }); }
 }
 
-// Clear sheet: deleting everyone takes typing the phrase. Case and spacing
-// are forgiven (phone keyboards capitalize and autocorrect); the words aren't.
+// Clear sheet: deleting everyone takes typing the phrase. Case and stray
+// spaces are forgiven (phone keyboards capitalize the first letter).
 const clearPhraseOk = () => norm($('#clearPhrase').value) === norm(CLEAR_PHRASE);
 function openClear() {
   const all = allGuests();
   const arrived = all.filter((g) => g.arrived_at).length;
   const who = all.length === 1 ? '<b>1 guest</b>' : `all <b>${all.length} guests</b>`;
-  $('#clearSub').innerHTML = `This deletes ${who}${arrived ? ` (${arrived} checked in)` : ''} from every device. It can’t be undone.`;
+  $('#clearSub').innerHTML = `This deletes ${who}${arrived ? ` (${arrived} checked in)` : ''} from every device. You’ll have a few seconds to undo it.`;
   $('#clearPhraseShown').textContent = CLEAR_PHRASE;
   $('#clearPhrase').value = '';
   $('#clearSubmit').disabled = true;
@@ -824,12 +842,34 @@ async function submitClear(e) {
   const before = state.guests;
   state.guests = new Map();
   render();
-  const n = await mutate(
+  const res = await mutate(
     (token) => store.clear(token),
     () => { state.guests = before; },
     'Couldn’t clear the list.',
   );
-  if (n !== undefined) toast(`List cleared, <b>${n}</b> ${n === 1 ? 'guest' : 'guests'} deleted`);
+  if (!res) return;
+  const msg = `List cleared, <b>${res.count}</b> ${res.count === 1 ? 'guest' : 'guests'} deleted`;
+  toast(msg, res.count ? { action: 'Undo', onAction: () => undoClear(res.batch, before), ms: 10000 } : {});
+}
+
+// Undo restores what the server deleted (its copy, not ours, which may be
+// stale). Our snapshot only fills the list in until the server answers.
+async function undoClear(batch, before) {
+  const temp = [...before.values()].filter((g) => !g._new && !state.guests.has(g.id))
+    .map((g) => ({ ...g, _pending: true }));
+  temp.forEach((g) => state.guests.set(g.id, g));
+  render();
+  const rows = await mutate(
+    (token) => store.undoClear(token, batch),
+    () => temp.forEach((g) => state.guests.delete(g.id)),
+    'Couldn’t undo the clear.',
+  );
+  if (!rows) return;
+  temp.forEach((g) => state.guests.delete(g.id));
+  rows.forEach((r) => state.guests.set(r.id, r));
+  render();
+  if (rows.length) toast(`<b>${rows.length}</b> ${rows.length === 1 ? 'guest' : 'guests'} restored`, { kind: 'success' });
+  else toast('Couldn’t undo. The list was cleared again since.', { kind: 'error' });
 }
 
 // ---------- CSV export ----------

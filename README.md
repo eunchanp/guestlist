@@ -42,8 +42,9 @@ cookies set from JavaScript after 7 days.
 - **Export:** the **CSV** button downloads everyone with their status and
   arrival time.
 - **Next event:** **Clear list** (under the full list, while unlocked)
-  deletes every guest on every device. It asks you to type
-  *In hoc signo vinces* first and can't be undone, so export a CSV before.
+  deletes every guest on every device. It asks you to type *clear* first,
+  and the toast that follows has **Undo** for 10 seconds, which brings
+  everyone back as they were. Export a CSV first if you want a record.
 
 ## Local development
 

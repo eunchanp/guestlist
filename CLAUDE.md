@@ -59,6 +59,9 @@ There is one list and no "event" concept: **Clear list** wipes it for the next e
   `created_at`, `updated_at`. Index on `lower(name)`.
 - `guestlist_secret`: one row (`id = 1`) with the bcrypt `password_hash`.
   No policies and no grants, so clients can't see it at all.
+- `guestlist_cleared`: the guests removed by the latest `guestlist_clear`
+  (same columns plus `batch`), kept for `guestlist_undo_clear`. The next clear
+  replaces it. Locked down like `guestlist_secret`, not in realtime.
 - Client-only row flags: `_pending` (write in flight, row shown dimmed) and
   `_new` (optimistic insert with a `tmp-` id, left out of the CSV).
 
@@ -77,7 +80,8 @@ bcrypt, so token writes skip the slow check (0.2 ms vs 48 ms).
 | `guestlist_update` | `p_id, p_name, p_note` | row | |
 | `guestlist_set_arrived` | `p_id, p_arrived, p_at` | row | `p_at` restores an exact time (Undo), else server `now()` |
 | `guestlist_delete` | `p_id` | void | |
-| `guestlist_clear` | (none) | count deleted | `delete ... where true` |
+| `guestlist_clear` | (none) | jsonb `{batch, count}` | moves every guest into `guestlist_cleared` |
+| `guestlist_undo_clear` | `p_batch` | restored rows | `[]` if already undone or a later clear replaced it |
 
 Internal and not executable by `anon`/`authenticated`: `guestlist_set_password`,
 `guestlist_require`, `guestlist_device_token`.
@@ -107,7 +111,7 @@ throws the same codes, so every UI path works in demo:
 
 ## Client architecture (`js/app.js`)
 - **Stores:** `createSupabaseStore` / `createLocalStore` share one interface
-  (`init, fetchAll, login, add, update, setArrived, remove, clear, subscribe`).
+  (`init, fetchAll, login, add, update, setArrived, remove, clear, undoClear, subscribe`).
   A new write must be added to both.
   - Supabase: lazy-loads supabase-js 2.45.4 (UMD from jsdelivr) in `init()`,
     so demo mode works offline. `persistSession: false`.
@@ -168,8 +172,10 @@ throws the same codes, so every UI path works in demo:
   paste) flagged and skipped, Cmd/Ctrl+Enter submits.
 - Delete is a two-tap arm in the edit sheet. **Clear list** shows only under
   the full, unfiltered, unsearched list (never in the door flow). It needs
-  `CLEAR_PHRASE` typed (compared with `norm`, so case and spacing are
-  forgiven) and offers a CSV export first.
+  `CLEAR_PHRASE` (`clear`) typed, compared with `norm` so case and spacing
+  are forgiven, and offers a CSV export first. Its toast has Undo for 10 s,
+  which restores the server's copy of that batch (`undoClear()`), not the
+  client's snapshot; the snapshot only fills the list in while it loads.
 - CSV: UTF-8 BOM for Excel, formula-injection guard in `csvCell()` (but `+1` /
   `-2` notes stay readable), sorted by name.
 
@@ -193,11 +199,13 @@ throws the same codes, so every UI path works in demo:
   clients can execute anything outside its `CLIENT_API` list.
 - Changing a function's arguments or return type: `drop function if exists`
   the old signature first. `create or replace` can't change the return type,
-  and a new argument list creates an overload.
+  and a new argument list creates an overload. To keep re-runs from dropping
+  it every time, drop only the old shape in a `do` block (see `guestlist_clear`).
 - Supabase's pg_safeupdate rejects DELETE/UPDATE without WHERE (hence
   `where true`). Use DELETE, not TRUNCATE, so realtime tells the other devices.
 - Storage keys: cookies `gl_token` / `gl_demo_token`; localStorage
-  `gl_filter`, `gl_demo_guests`, legacy `gl_pw` / `gl_demo_pw`. Go through
+  `gl_filter`, `gl_demo_guests`, `gl_demo_cleared` (demo undo copy), legacy
+  `gl_pw` / `gl_demo_pw`. Go through
   `lsGet` / `lsSet` (they survive private mode).
 
 ## Recipe: add a write operation

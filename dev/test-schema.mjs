@@ -18,7 +18,7 @@ const schema = readFileSync(schemaPath, 'utf8');
 // What the browser may execute. Adding a client RPC means adding it here too;
 // anything else showing up as executable is a missing `revoke ... from public`.
 const CLIENT_API = ['guestlist_add', 'guestlist_clear', 'guestlist_delete', 'guestlist_login',
-  'guestlist_set_arrived', 'guestlist_update'];
+  'guestlist_set_arrived', 'guestlist_undo_clear', 'guestlist_update'];
 const CLIENT_ROLES = ['anon', 'authenticated'];
 
 const db = new PGlite({ extensions: { pgcrypto } });
@@ -155,6 +155,7 @@ await test('clients can not see the secret or call the internal functions (42501
   for (const role of CLIENT_ROLES) {
     await as(role, async () => {
       await fails('42501', 'select * from guestlist_secret');
+      await fails('42501', 'select * from guestlist_cleared');
       await fails('42501', `select guestlist_set_password('hijacked')`);
       await fails('42501', 'select guestlist_require($1)', [token]);
       await fails('42501', `select guestlist_device_token('x')`);
@@ -188,6 +189,7 @@ await test('every write refuses a wrong token (28P01)', async () => {
   await anonFails('28P01', `select guestlist_set_arrived('nope', $1, true)`, [id]);
   await anonFails('28P01', `select guestlist_delete('nope', $1)`, [id]);
   await anonFails('28P01', `select guestlist_clear('nope')`);
+  await anonFails('28P01', `select guestlist_undo_clear('nope', $1)`, [missing]);
   await anonFails('28P01', 'select guestlist_add(null, array[$1])', ['X']);
 });
 
@@ -206,12 +208,50 @@ await test('re-running the schema keeps the guests and the password', async () =
   assert.equal((await anonOne('select guestlist_login($1) as t', ['secret2'])).t, token);
 });
 
-await test('clear deletes everyone and returns the count', async () => {
-  const before = (await one('select count(*)::int as n from guestlist_guests')).n;
-  assert.ok(before > 0);
-  assert.equal((await anonOne('select guestlist_clear($1) as n', [token])).n, before);
+await test('the schema upgrades a guestlist_clear that returned a count', async () => {
+  await db.exec(`drop function guestlist_clear(text);
+    create function guestlist_clear(p_password text) returns integer language sql as 'select 0';`);
+  await db.exec(schema);
+  const { t } = await one(`select pg_get_function_result('guestlist_clear(text)'::regprocedure) as t`);
+  assert.equal(t, 'jsonb');
+  assert.ok((await one(`select has_function_privilege('anon', 'guestlist_clear(text)', 'execute') as ok`)).ok);
+});
+
+const clear = async () => (await anonOne('select guestlist_clear($1) as r', [token])).r;
+const undoClear = (batch) => anon('select * from guestlist_undo_clear($1, $2) order by id', [token, batch]);
+const snapshot = (list) => list.map((g) => ({
+  id: g.id, name: g.name, note: g.note, arrived_at: g.arrived_at?.toISOString() ?? null,
+  created_at: g.created_at.toISOString(),
+}));
+let lastClear;
+
+await test('clear deletes everyone and returns the count and a batch', async () => {
+  const before = await rows('select * from guestlist_guests order by id');
+  assert.ok(before.length > 1 && before.some((g) => g.arrived_at) && before.some((g) => g.note));
+  const r = await clear();
+  assert.equal(r.count, before.length);
+  assert.match(r.batch, /^[0-9a-f-]{36}$/);
   assert.equal((await one('select count(*)::int as n from guestlist_guests')).n, 0);
-  assert.equal((await anonOne('select guestlist_clear($1) as n', [token])).n, 0);
+  lastClear = { batch: r.batch, before };
+});
+
+await test('undo_clear restores those guests as they were, only once', async () => {
+  const back = await undoClear(lastClear.batch);
+  assert.deepEqual(snapshot(back), snapshot(lastClear.before));
+  assert.deepEqual(snapshot(await rows('select * from guestlist_guests order by id')), snapshot(lastClear.before));
+  assert.deepEqual(await undoClear(lastClear.batch), []);
+  assert.equal((await one('select count(*)::int as n from guestlist_cleared')).n, 0);
+});
+
+await test('a later clear replaces what can be undone', async () => {
+  const first = await clear();
+  await add(token, ['Zed']);
+  const second = await clear();
+  assert.equal(second.count, 1);
+  assert.deepEqual(await undoClear(first.batch), []);
+  assert.deepEqual((await undoClear(second.batch)).map((g) => g.name), ['Zed']);
+  await clear();
+  assert.equal((await clear()).count, 0);
 });
 
 await test('realtime publishes guestlist_guests', async () => {

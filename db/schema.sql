@@ -42,11 +42,24 @@ create table if not exists public.guestlist_secret (
   constraint guestlist_secret_one_row check (id = 1)
 );
 
+-- The guests removed by the latest guestlist_clear, kept so it can be undone.
+-- batch names that clear; the next clear replaces the contents.
+create table if not exists public.guestlist_cleared (
+  id         uuid primary key,
+  batch      uuid not null,
+  name       text not null,
+  note       text not null,
+  arrived_at timestamptz,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+);
+
 -- ------------------------------------------------------------
 -- Row-level security
 -- ------------------------------------------------------------
 alter table public.guestlist_guests enable row level security;
 alter table public.guestlist_secret enable row level security;
+alter table public.guestlist_cleared enable row level security;
 
 drop policy if exists "guestlist public read" on public.guestlist_guests;
 create policy "guestlist public read" on public.guestlist_guests
@@ -56,6 +69,8 @@ create policy "guestlist public read" on public.guestlist_guests
 revoke insert, update, delete, truncate on public.guestlist_guests from anon, authenticated;
 -- guestlist_secret has no policies at all and no grants: invisible to clients.
 revoke all on public.guestlist_secret from anon, authenticated;
+-- guestlist_cleared likewise: only the clear/undo functions touch it.
+revoke all on public.guestlist_cleared from anon, authenticated;
 
 -- ------------------------------------------------------------
 -- Password helpers
@@ -224,23 +239,58 @@ begin
   delete from public.guestlist_guests where id = p_id;
 end $$;
 
--- Remove every guest (to reuse the list for the next event). Returns how
--- many were removed. DELETE rather than TRUNCATE so realtime tells the other
--- devices; "where true" because Supabase's pg_safeupdate rejects a DELETE
--- without a WHERE clause.
+-- Remove every guest (to reuse the list for the next event), keeping a copy
+-- in guestlist_cleared for guestlist_undo_clear. Returns {batch, count}.
+-- DELETE rather than TRUNCATE so realtime tells the other devices; "where
+-- true" because Supabase's pg_safeupdate rejects a DELETE without a WHERE.
+-- An earlier version returned just the count, and a return type can't be
+-- replaced in place, so drop that one first.
+do $$
+begin
+  if (select prorettype from pg_proc
+       where oid = to_regprocedure('public.guestlist_clear(text)')) = 'integer'::regtype
+    then drop function public.guestlist_clear(text); end if;
+end $$;
 create or replace function public.guestlist_clear(p_password text)
-returns integer
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
+  b uuid := gen_random_uuid();
   n integer;
 begin
   perform public.guestlist_require(p_password);
-  delete from public.guestlist_guests where true;
+  delete from public.guestlist_cleared where true;
+  with gone as (
+    delete from public.guestlist_guests where true returning *
+  )
+  insert into public.guestlist_cleared (id, batch, name, note, arrived_at, created_at, updated_at)
+  select id, b, name, note, arrived_at, created_at, updated_at from gone;
   get diagnostics n = row_count;
-  return n;
+  return jsonb_build_object('batch', b, 'count', n);
+end $$;
+
+-- Bring back the guests a guestlist_clear removed, with their ids, notes and
+-- arrival times. Returns the restored rows: none if that clear was already
+-- undone or a later clear replaced it.
+create or replace function public.guestlist_undo_clear(p_password text, p_batch uuid)
+returns setof public.guestlist_guests
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.guestlist_require(p_password);
+  return query
+    with back as (
+      delete from public.guestlist_cleared where batch = p_batch returning *
+    )
+    insert into public.guestlist_guests (id, name, note, arrived_at, created_at, updated_at)
+    select id, name, note, arrived_at, created_at, now() from back
+    on conflict (id) do nothing
+    returning *;
 end $$;
 
 -- Function privileges: Postgres grants EXECUTE to PUBLIC by default, so
@@ -254,12 +304,14 @@ revoke all on function public.guestlist_update(text, uuid, text, text)          
 revoke all on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) from public;
 revoke all on function public.guestlist_delete(text, uuid)                         from public;
 revoke all on function public.guestlist_clear(text)                                from public;
+revoke all on function public.guestlist_undo_clear(text, uuid)                     from public;
 grant execute on function public.guestlist_login(text)                                to anon, authenticated;
 grant execute on function public.guestlist_add(text, text[], text, boolean)           to anon, authenticated;
 grant execute on function public.guestlist_update(text, uuid, text, text)             to anon, authenticated;
 grant execute on function public.guestlist_set_arrived(text, uuid, boolean, timestamptz) to anon, authenticated;
 grant execute on function public.guestlist_delete(text, uuid)                         to anon, authenticated;
 grant execute on function public.guestlist_clear(text)                                to anon, authenticated;
+grant execute on function public.guestlist_undo_clear(text, uuid)                     to anon, authenticated;
 
 -- ------------------------------------------------------------
 -- Realtime: push changes to every open device (door phones stay in sync).
